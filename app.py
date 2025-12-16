@@ -4,6 +4,7 @@ Phase 2: MVP 대시보드
 """
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 from data_loader import (
     load_data, 
     get_reference_date, 
@@ -253,6 +254,95 @@ if not station_summary.empty:
         hide_index=True,
         height=400
     )
+else:
+    st.info("조건에 맞는 데이터가 없습니다.")
+
+# ========================================
+# 전체 노선 시간대별 혼잡도 히트맵
+# ========================================
+st.markdown("---")
+st.subheader("🌡️ 전체 노선 시간대별 혼잡도 히트맵")
+
+# 노선별, 방향별, 시간대별 평균 혼잡도 계산
+heatmap_data = filtered_df.groupby(['호선', '상하선구분', 'time', 'time_order']).agg({
+    'crowding': 'mean'
+}).reset_index()
+
+# 노선+방향 컬럼 생성 (예: "1호선-상행")
+heatmap_data['노선방향'] = heatmap_data['호선'] + '-' + heatmap_data['상하선구분']
+
+# 피벗 테이블 생성 (행: 노선방향, 열: 시간)
+if not heatmap_data.empty:
+    # 시간 순서대로 정렬
+    heatmap_data = heatmap_data.sort_values('time_order')
+    
+    # 피벗 테이블 생성
+    pivot_data = heatmap_data.pivot_table(
+        index='노선방향',
+        columns='time',
+        values='crowding',
+        aggfunc='mean'
+    )
+    
+    # 노선별로 정렬 (1호선-상행, 1호선-하행, 2호선-상행, ...)
+    line_order = []
+    for line in sorted(filtered_df['호선'].unique()):
+        for direction in ['상행', '하행']:
+            line_key = f"{line}-{direction}"
+            if line_key in pivot_data.index:
+                line_order.append(line_key)
+    
+    if line_order:
+        pivot_data = pivot_data.reindex(line_order)
+    
+    # Plotly 히트맵 생성
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_data.values,
+        x=pivot_data.columns,
+        y=pivot_data.index,
+        colorscale=[
+            [0, 'white'],      # 0% - 흰색
+            [0.34, '#ffffcc'], # 34% - 연한 노란색 (좌석 만석)
+            [0.5, '#ffeda0'],  # 50% - 노란색
+            [0.7, '#feb24c'],  # 70% - 주황색
+            [0.85, '#fc4e2a'], # 85% - 진한 주황색
+            [1, '#bd0026']     # 100%+ - 붉은색 (매우 혼잡)
+        ],
+        colorbar=dict(
+            title=dict(
+                text="혼잡도 (%)",
+                side="right"
+            ),
+            tickmode="linear",
+            tick0=0,
+            dtick=20
+        ),
+        hovertemplate='<b>%{y}</b><br>시간: %{x}<br>혼잡도: %{z:.1f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': '전체 노선 시간대별 평균 혼잡도',
+            'x': 0.5,
+            'xanchor': 'center'
+        },
+        xaxis_title='시간대',
+        yaxis_title='노선-방향',
+        xaxis={'tickangle': -45},
+        height=max(400, len(pivot_data.index) * 30),  # 노선 수에 따라 높이 조정
+        hovermode='closest'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 색상 범례 설명
+    st.caption("""
+    💡 **색상 해석**: 
+    - 🤍 흰색/연한색 (0-34%): 좌석 여유~만석 
+    - 🟡 노란색 (34-70%): 입석 포함 (정원 이내)
+    - 🟠 주황색 (70-100%): 혼잡 
+    - 🔴 붉은색 (100% 이상): 매우 혼잡 (정원 초과)
+    """)
 else:
     st.info("조건에 맞는 데이터가 없습니다.")
 
