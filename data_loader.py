@@ -397,17 +397,13 @@ def get_line_summary(df: pd.DataFrame, include_9: bool = True, include_20: bool 
     if df.empty:
         return pd.DataFrame()
     
-    # 전체 평균 혼잡도
-    line_avg = df.groupby('호선').agg({
-        'crowding': 'mean'
+    # 전체 평균 및 피크 혼잡도 (최적화: 한 번의 groupby로 통합)
+    line_summary = df.groupby('호선').agg({
+        'crowding': ['mean', 'max']
     }).reset_index()
-    line_avg = line_avg.rename(columns={'crowding': '평균혼잡'})
     
-    # 피크 혼잡도
-    line_peak = df.groupby('호선').agg({
-        'crowding': 'max'
-    }).reset_index()
-    line_peak = line_peak.rename(columns={'crowding': '피크혼잡'})
+    # 컬럼명 평탄화
+    line_summary.columns = ['호선', '평균혼잡', '피크혼잡']
     
     # 출근 평균
     if include_9:
@@ -432,12 +428,12 @@ def get_line_summary(df: pd.DataFrame, include_9: bool = True, include_20: bool 
     line_evening = line_evening.rename(columns={'crowding': '퇴근평균'})
     
     # 병합
-    line_summary = line_avg.merge(line_peak, on='호선', how='left')
     line_summary = line_summary.merge(line_commute, on='호선', how='left')
     line_summary = line_summary.merge(line_evening, on='호선', how='left')
     
     # 결측값 처리
-    line_summary = line_summary.fillna(0)
+    line_summary['출근평균'] = line_summary['출근평균'].fillna(0)
+    line_summary['퇴근평균'] = line_summary['퇴근평균'].fillna(0)
     
     # 호선 정렬
     line_summary = line_summary.sort_values('호선')

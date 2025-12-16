@@ -98,6 +98,9 @@ include_20 = st.sidebar.toggle(
     help="퇴근시간 평균 계산 시 20시를 포함합니다 (17~20시)"
 )
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("📥 데이터 다운로드")
+
 # ========================================
 # 필터 적용
 # ========================================
@@ -122,7 +125,21 @@ if station_search:
 # 필터링 결과 확인
 if filtered_df.empty:
     st.warning("⚠️ 선택한 필터 조건에 해당하는 데이터가 없습니다. 필터를 조정해주세요.")
+    st.sidebar.info("필터 조건에 맞는 데이터가 없어 다운로드할 수 없습니다.")
     st.stop()
+
+# ========================================
+# 사이드바 다운로드 버튼 (필터링 성공 시)
+# ========================================
+# 필터링된 전체 데이터 다운로드
+csv_data = filtered_df.to_csv(index=False, encoding='utf-8-sig')
+st.sidebar.download_button(
+    label="필터 적용 데이터 다운로드 (CSV)",
+    data=csv_data,
+    file_name=f"혼잡도_필터적용_{ref_date}.csv",
+    mime="text/csv",
+    help="현재 필터 조건에 맞는 전체 데이터를 다운로드합니다"
+)
 
 # ========================================
 # KPI 메트릭
@@ -185,6 +202,15 @@ with tab1:
             hide_index=True,
             height=400
         )
+        
+        # CSV 다운로드 버튼
+        csv_top10 = display_df.to_csv(index=False, encoding='utf-8-sig')
+        st.download_button(
+            label="📥 피크 TOP10 다운로드 (CSV)",
+            data=csv_top10,
+            file_name=f"피크TOP10_{ref_date}.csv",
+            mime="text/csv"
+        )
     else:
         st.info("조건에 맞는 데이터가 없습니다.")
 
@@ -204,6 +230,15 @@ with tab2:
             hide_index=True,
             height=400
         )
+        
+        # CSV 다운로드 버튼
+        csv_commute = display_df.to_csv(index=False, encoding='utf-8-sig')
+        st.download_button(
+            label="📥 출근평균 TOP10 다운로드 (CSV)",
+            data=csv_commute,
+            file_name=f"출근평균TOP10_{ref_date}.csv",
+            mime="text/csv"
+        )
     else:
         st.info("조건에 맞는 데이터가 없습니다.")
 
@@ -222,6 +257,15 @@ with tab3:
             use_container_width=True,
             hide_index=True,
             height=400
+        )
+        
+        # CSV 다운로드 버튼
+        csv_evening = display_df.to_csv(index=False, encoding='utf-8-sig')
+        st.download_button(
+            label="📥 퇴근평균 TOP10 다운로드 (CSV)",
+            data=csv_evening,
+            file_name=f"퇴근평균TOP10_{ref_date}.csv",
+            mime="text/csv"
         )
     else:
         st.info("조건에 맞는 데이터가 없습니다.")
@@ -386,6 +430,15 @@ if not station_summary.empty:
         use_container_width=True,
         hide_index=True,
         height=400
+    )
+    
+    # CSV 다운로드 버튼
+    csv_station_summary = display_summary.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 역별 종합 요약 다운로드 (CSV)",
+        data=csv_station_summary,
+        file_name=f"역별종합요약_{ref_date}.csv",
+        mime="text/csv"
     )
     
     st.caption(f"💡 출근평균: 7~9시{'(9시 포함)' if include_9 else ''} | 퇴근평균: 17~20시{'(20시 포함)' if include_20 else ''}")
