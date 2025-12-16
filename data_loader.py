@@ -183,3 +183,153 @@ def get_data_summary(df: pd.DataFrame) -> dict:
         "혼잡도 범위": f"{df['crowding'].min():.1f} ~ {df['crowding'].max():.1f}",
     }
 
+
+def calculate_peak(df: pd.DataFrame) -> Tuple[float, str]:
+    """
+    피크 혼잡도와 피크 시간 반환
+    Returns:
+        (피크 혼잡도, 피크 시간) 튜플
+    """
+    if df.empty or df['crowding'].isna().all():
+        return 0.0, "-"
+    
+    # 결측값 제외
+    valid_df = df.dropna(subset=['crowding'])
+    
+    # 피크 혼잡도
+    peak_crowding = valid_df['crowding'].max()
+    
+    # 피크 시간 (동률 시 가장 이른 시간)
+    peak_row = valid_df[valid_df['crowding'] == peak_crowding].iloc[0]
+    peak_time = peak_row['time']
+    
+    return peak_crowding, peak_time
+
+
+def calculate_commute_avg(df: pd.DataFrame, include_9: bool = True) -> float:
+    """
+    출근 시간대(7~9시) 평균 혼잡도
+    Args:
+        df: 데이터프레임
+        include_9: 9시 포함 여부 (기본 True)
+    Returns:
+        평균 혼잡도
+    """
+    if df.empty:
+        return 0.0
+    
+    if include_9:
+        # 7시 ~ 9시 포함
+        time_filtered = df[(df['hour'] >= 7) & (df['hour'] <= 9)]
+    else:
+        # 7시 ~ 9시 미만
+        time_filtered = df[(df['hour'] >= 7) & (df['hour'] < 9)]
+    
+    if time_filtered.empty:
+        return 0.0
+    
+    return time_filtered['crowding'].mean()
+
+
+def calculate_evening_avg(df: pd.DataFrame, include_20: bool = True) -> float:
+    """
+    퇴근 시간대(17~20시) 평균 혼잡도
+    Args:
+        df: 데이터프레임
+        include_20: 20시 포함 여부 (기본 True)
+    Returns:
+        평균 혼잡도
+    """
+    if df.empty:
+        return 0.0
+    
+    if include_20:
+        # 17시 ~ 20시 포함
+        time_filtered = df[(df['hour'] >= 17) & (df['hour'] <= 20)]
+    else:
+        # 17시 ~ 20시 미만
+        time_filtered = df[(df['hour'] >= 17) & (df['hour'] < 20)]
+    
+    if time_filtered.empty:
+        return 0.0
+    
+    return time_filtered['crowding'].mean()
+
+
+def get_peak_top10(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    피크 혼잡 TOP10 테이블 반환
+    호선, 역명, 상하선구분, 요일구분 기준으로 그룹화
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 그룹별 피크 계산
+    def get_peak_info(group):
+        valid_group = group.dropna(subset=['crowding'])
+        if valid_group.empty:
+            return pd.Series({
+                '피크혼잡': 0.0,
+                '피크시간': '-'
+            })
+        
+        peak_crowding = valid_group['crowding'].max()
+        peak_row = valid_group[valid_group['crowding'] == peak_crowding].iloc[0]
+        
+        return pd.Series({
+            '피크혼잡': peak_crowding,
+            '피크시간': peak_row['time']
+        })
+    
+    peak_df = df.groupby(['호선', '역명', '상하선구분', '요일구분']).apply(
+        get_peak_info
+    ).reset_index()
+    
+    # 피크 혼잡 기준 내림차순 정렬
+    peak_df = peak_df.sort_values('피크혼잡', ascending=False).head(10).reset_index(drop=True)
+    
+    # 순위 추가
+    peak_df.insert(0, '순위', range(1, len(peak_df) + 1))
+    
+    # 컬럼명 변경
+    peak_df = peak_df.rename(columns={
+        '상하선구분': '방향',
+        '요일구분': '요일'
+    })
+    
+    return peak_df
+
+
+def get_station_peak_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    역별 피크 요약 테이블 반환
+    역 단위로 통합 (방향/요일 통합)
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 역별 피크 계산
+    def get_peak_info(group):
+        valid_group = group.dropna(subset=['crowding'])
+        if valid_group.empty:
+            return pd.Series({
+                '피크혼잡': 0.0,
+                '피크시간': '-'
+            })
+        
+        peak_crowding = valid_group['crowding'].max()
+        peak_row = valid_group[valid_group['crowding'] == peak_crowding].iloc[0]
+        
+        return pd.Series({
+            '피크혼잡': peak_crowding,
+            '피크시간': peak_row['time']
+        })
+    
+    station_df = df.groupby(['호선', '역명']).apply(
+        get_peak_info
+    ).reset_index()
+    
+    # 피크 혼잡 기준 내림차순 정렬
+    station_df = station_df.sort_values('피크혼잡', ascending=False).reset_index(drop=True)
+    
+    return station_df
