@@ -9,6 +9,7 @@ import glob
 from pathlib import Path
 from typing import Tuple, Optional
 from datetime import datetime
+from station_coords import STATION_COORDS
 
 
 def find_csv_file() -> Optional[str]:
@@ -546,3 +547,93 @@ def get_station_full_summary(df: pd.DataFrame, include_9: bool = True, include_2
     station_summary = station_summary.sort_values('피크혼잡', ascending=False).reset_index(drop=True)
     
     return station_summary
+
+
+def get_station_crowding_for_map(df: pd.DataFrame, crowding_type: str = "average", 
+                                  include_9: bool = True, include_20: bool = True) -> pd.DataFrame:
+    """
+    지도 시각화용 역별 혼잡도 데이터 생성 (위경도 포함)
+    Args:
+        df: 데이터프레임
+        crowding_type: 혼잡도 유형 ("average", "peak", "commute", "evening")
+        include_9: 출근시간 9시 포함 여부
+        include_20: 퇴근시간 20시 포함 여부
+    Returns:
+        역명, 호선, 위도, 경도, 혼잡도 데이터프레임
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 역별 혼잡도 계산
+    if crowding_type == "peak":
+        # 피크 혼잡도
+        def get_peak(group):
+            valid_group = group.dropna(subset=['crowding'])
+            if valid_group.empty:
+                return pd.Series({'crowding_value': 0.0})
+            return pd.Series({'crowding_value': valid_group['crowding'].max()})
+        
+        station_crowding = df.groupby(['호선', '역명']).apply(get_peak).reset_index()
+        
+    elif crowding_type == "commute":
+        # 출근 평균
+        if include_9:
+            time_filtered = df[(df['hour'] >= 7) & (df['hour'] <= 9)]
+        else:
+            time_filtered = df[(df['hour'] >= 7) & (df['hour'] < 9)]
+        
+        if time_filtered.empty:
+            return pd.DataFrame()
+        
+        station_crowding = time_filtered.groupby(['호선', '역명']).agg({
+            'crowding': 'mean'
+        }).reset_index()
+        station_crowding = station_crowding.rename(columns={'crowding': 'crowding_value'})
+        
+    elif crowding_type == "evening":
+        # 퇴근 평균
+        if include_20:
+            time_filtered = df[(df['hour'] >= 17) & (df['hour'] <= 20)]
+        else:
+            time_filtered = df[(df['hour'] >= 17) & (df['hour'] < 20)]
+        
+        if time_filtered.empty:
+            return pd.DataFrame()
+        
+        station_crowding = time_filtered.groupby(['호선', '역명']).agg({
+            'crowding': 'mean'
+        }).reset_index()
+        station_crowding = station_crowding.rename(columns={'crowding': 'crowding_value'})
+        
+    else:  # average (기본값)
+        # 전체 평균
+        station_crowding = df.groupby(['호선', '역명']).agg({
+            'crowding': 'mean'
+        }).reset_index()
+        station_crowding = station_crowding.rename(columns={'crowding': 'crowding_value'})
+    
+    # 위경도 데이터 병합
+    coords_list = []
+    for _, row in station_crowding.iterrows():
+        station_name = row['역명']
+        coord = STATION_COORDS.get(station_name)
+        
+        if coord:
+            coords_list.append({
+                '호선': row['호선'],
+                '역명': station_name,
+                'crowding_value': row['crowding_value'],
+                'lat': coord['lat'],
+                'lng': coord['lng']
+            })
+    
+    # 결과 데이터프레임 생성
+    if not coords_list:
+        return pd.DataFrame()
+    
+    result_df = pd.DataFrame(coords_list)
+    
+    # 혼잡도 기준 정렬
+    result_df = result_df.sort_values('crowding_value', ascending=False).reset_index(drop=True)
+    
+    return result_df

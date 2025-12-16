@@ -5,6 +5,8 @@ Phase 2: MVP 대시보드
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 from data_loader import (
     load_data, 
     get_reference_date, 
@@ -16,7 +18,8 @@ from data_loader import (
     get_evening_top10,
     get_line_summary,
     get_station_peak_summary,
-    get_station_full_summary
+    get_station_full_summary,
+    get_station_crowding_for_map
 )
 
 # 페이지 설정
@@ -534,6 +537,128 @@ if not heatmap_data.empty:
 else:
     st.info("조건에 맞는 데이터가 없습니다.")
 
+# ========================================
+# 역별 혼잡도 지도 시각화
+# ========================================
+st.markdown("---")
+st.subheader("🗺️ 역별 혼잡도 지도")
+
+# 지도 옵션
+col_map1, col_map2 = st.columns([1, 3])
+
+with col_map1:
+    st.markdown("##### 지도 표시 옵션")
+    
+    # 혼잡도 기준 선택
+    crowding_type = st.radio(
+        "혼잡도 기준",
+        options=["average", "peak", "commute", "evening"],
+        format_func=lambda x: {
+            "average": "전체 평균",
+            "peak": "피크 혼잡",
+            "commute": f"출근 평균 (7~9시{'포함' if include_9 else '미만'})",
+            "evening": f"퇴근 평균 (17~20시{'포함' if include_20 else '미만'})"
+        }[x],
+        index=0,
+        help="지도에 표시할 혼잡도 기준을 선택합니다"
+    )
+    
+    # 색상 범례
+    st.markdown("##### 색상 범례")
+    st.markdown("""
+    <div style='font-size: 0.9em;'>
+    🟢 <strong>초록색 (0-34%)</strong><br/>
+    &nbsp;&nbsp;&nbsp;좌석 여유~만석<br/><br/>
+    🟡 <strong>노란색 (34-70%)</strong><br/>
+    &nbsp;&nbsp;&nbsp;입석 포함 (정원 이내)<br/><br/>
+    🟠 <strong>주황색 (70-100%)</strong><br/>
+    &nbsp;&nbsp;&nbsp;혼잡<br/><br/>
+    🔴 <strong>빨간색 (100%+)</strong><br/>
+    &nbsp;&nbsp;&nbsp;매우 혼잡 (정원 초과)
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_map2:
+    # 지도용 데이터 생성
+    map_data = get_station_crowding_for_map(
+        filtered_df, 
+        crowding_type=crowding_type,
+        include_9=include_9,
+        include_20=include_20
+    )
+    
+    if not map_data.empty:
+        # Folium 지도 생성 (서울 중심)
+        m = folium.Map(
+            location=[37.5665, 126.9780],
+            zoom_start=11,
+            tiles='OpenStreetMap'
+        )
+        
+        # 색상 함수 정의
+        def get_color(crowding):
+            """혼잡도에 따른 마커 색상 반환"""
+            if crowding < 34:
+                return '#2ECC71'  # 초록색
+            elif crowding < 70:
+                return '#F1C40F'  # 노란색
+            elif crowding < 100:
+                return '#E67E22'  # 주황색
+            else:
+                return '#E74C3C'  # 빨간색
+        
+        # 마커 크기 함수 정의
+        def get_radius(crowding):
+            """혼잡도에 따른 마커 크기 반환 (5~20px)"""
+            min_radius = 5
+            max_radius = 20
+            normalized = min(crowding / 150, 1.0)  # 150%를 최대로 정규화
+            return min_radius + (max_radius - min_radius) * normalized
+        
+        # 각 역에 마커 추가
+        for _, row in map_data.iterrows():
+            crowding = row['crowding_value']
+            color = get_color(crowding)
+            radius = get_radius(crowding)
+            
+            # 팝업 HTML 생성
+            popup_html = f"""
+            <div style='font-family: Arial; min-width: 200px;'>
+                <h4 style='margin: 0 0 10px 0; color: #2C3E50;'>{row['역명']}역</h4>
+                <p style='margin: 5px 0;'><strong>호선:</strong> {row['호선']}</p>
+                <p style='margin: 5px 0;'><strong>혼잡도:</strong> {crowding:.1f}%</p>
+                <p style='margin: 5px 0; font-size: 0.9em; color: #7F8C8D;'>
+                    {'🟢 여유' if crowding < 34 else '🟡 보통' if crowding < 70 else '🟠 혼잡' if crowding < 100 else '🔴 매우 혼잡'}
+                </p>
+            </div>
+            """
+            
+            # CircleMarker 추가
+            folium.CircleMarker(
+                location=[row['lat'], row['lng']],
+                radius=radius,
+                popup=folium.Popup(popup_html, max_width=300),
+                tooltip=f"{row['역명']}역: {crowding:.1f}%",
+                color=color,
+                fill=True,
+                fillColor=color,
+                fillOpacity=0.7,
+                weight=2
+            ).add_to(m)
+        
+        # Streamlit에 지도 표시
+        st_folium(m, width=None, height=600)
+        
+        # 통계 정보
+        st.caption(f"""
+        💡 **지도 정보**: 
+        총 {len(map_data)}개 역 표시 | 
+        평균 혼잡도: {map_data['crowding_value'].mean():.1f}% | 
+        최고 혼잡도: {map_data['crowding_value'].max():.1f}% ({map_data.iloc[0]['역명']}역)
+        """)
+    else:
+        st.info("조건에 맞는 데이터가 없거나 위경도 정보가 없는 역입니다.")
+
 # 하단 정보
 st.markdown("---")
-st.caption("Phase 2: MVP 대시보드 - 서울교통공사 지하철 혼잡도")
+st.caption("Phase 5: 지도 시각화 - 서울교통공사 지하철 혼잡도")
