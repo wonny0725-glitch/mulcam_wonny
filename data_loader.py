@@ -300,6 +300,151 @@ def get_peak_top10(df: pd.DataFrame) -> pd.DataFrame:
     return peak_df
 
 
+def get_commute_top10(df: pd.DataFrame, include_9: bool = True) -> pd.DataFrame:
+    """
+    출근시간 평균 혼잡 TOP10 테이블 반환
+    호선, 역명, 상하선구분, 요일구분 기준으로 그룹화
+    Args:
+        df: 데이터프레임
+        include_9: 9시 포함 여부 (기본 True)
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 출근 시간대 필터링
+    if include_9:
+        time_filtered = df[(df['hour'] >= 7) & (df['hour'] <= 9)]
+    else:
+        time_filtered = df[(df['hour'] >= 7) & (df['hour'] < 9)]
+    
+    if time_filtered.empty:
+        return pd.DataFrame()
+    
+    # 그룹별 평균 계산
+    commute_df = time_filtered.groupby(['호선', '역명', '상하선구분', '요일구분']).agg({
+        'crowding': 'mean'
+    }).reset_index()
+    
+    commute_df = commute_df.rename(columns={'crowding': '출근평균'})
+    
+    # 출근 평균 기준 내림차순 정렬
+    commute_df = commute_df.sort_values('출근평균', ascending=False).head(10).reset_index(drop=True)
+    
+    # 순위 추가
+    commute_df.insert(0, '순위', range(1, len(commute_df) + 1))
+    
+    # 컬럼명 변경
+    commute_df = commute_df.rename(columns={
+        '상하선구분': '방향',
+        '요일구분': '요일'
+    })
+    
+    return commute_df
+
+
+def get_evening_top10(df: pd.DataFrame, include_20: bool = True) -> pd.DataFrame:
+    """
+    퇴근시간 평균 혼잡 TOP10 테이블 반환
+    호선, 역명, 상하선구분, 요일구분 기준으로 그룹화
+    Args:
+        df: 데이터프레임
+        include_20: 20시 포함 여부 (기본 True)
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 퇴근 시간대 필터링
+    if include_20:
+        time_filtered = df[(df['hour'] >= 17) & (df['hour'] <= 20)]
+    else:
+        time_filtered = df[(df['hour'] >= 17) & (df['hour'] < 20)]
+    
+    if time_filtered.empty:
+        return pd.DataFrame()
+    
+    # 그룹별 평균 계산
+    evening_df = time_filtered.groupby(['호선', '역명', '상하선구분', '요일구분']).agg({
+        'crowding': 'mean'
+    }).reset_index()
+    
+    evening_df = evening_df.rename(columns={'crowding': '퇴근평균'})
+    
+    # 퇴근 평균 기준 내림차순 정렬
+    evening_df = evening_df.sort_values('퇴근평균', ascending=False).head(10).reset_index(drop=True)
+    
+    # 순위 추가
+    evening_df.insert(0, '순위', range(1, len(evening_df) + 1))
+    
+    # 컬럼명 변경
+    evening_df = evening_df.rename(columns={
+        '상하선구분': '방향',
+        '요일구분': '요일'
+    })
+    
+    return evening_df
+
+
+def get_line_summary(df: pd.DataFrame, include_9: bool = True, include_20: bool = True) -> pd.DataFrame:
+    """
+    노선별 혼잡도 요약 (평균, 피크, 출근평균, 퇴근평균)
+    Args:
+        df: 데이터프레임
+        include_9: 출근시간 9시 포함 여부
+        include_20: 퇴근시간 20시 포함 여부
+    Returns:
+        노선별 요약 데이터프레임
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 전체 평균 혼잡도
+    line_avg = df.groupby('호선').agg({
+        'crowding': 'mean'
+    }).reset_index()
+    line_avg = line_avg.rename(columns={'crowding': '평균혼잡'})
+    
+    # 피크 혼잡도
+    line_peak = df.groupby('호선').agg({
+        'crowding': 'max'
+    }).reset_index()
+    line_peak = line_peak.rename(columns={'crowding': '피크혼잡'})
+    
+    # 출근 평균
+    if include_9:
+        commute_df = df[(df['hour'] >= 7) & (df['hour'] <= 9)]
+    else:
+        commute_df = df[(df['hour'] >= 7) & (df['hour'] < 9)]
+    
+    line_commute = commute_df.groupby('호선').agg({
+        'crowding': 'mean'
+    }).reset_index()
+    line_commute = line_commute.rename(columns={'crowding': '출근평균'})
+    
+    # 퇴근 평균
+    if include_20:
+        evening_df = df[(df['hour'] >= 17) & (df['hour'] <= 20)]
+    else:
+        evening_df = df[(df['hour'] >= 17) & (df['hour'] < 20)]
+    
+    line_evening = evening_df.groupby('호선').agg({
+        'crowding': 'mean'
+    }).reset_index()
+    line_evening = line_evening.rename(columns={'crowding': '퇴근평균'})
+    
+    # 병합
+    line_summary = line_avg.merge(line_peak, on='호선', how='left')
+    line_summary = line_summary.merge(line_commute, on='호선', how='left')
+    line_summary = line_summary.merge(line_evening, on='호선', how='left')
+    
+    # 결측값 처리
+    line_summary = line_summary.fillna(0)
+    
+    # 호선 정렬
+    line_summary = line_summary.sort_values('호선')
+    
+    return line_summary
+
+
 def get_station_peak_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     역별 피크 요약 테이블 반환
@@ -333,3 +478,75 @@ def get_station_peak_summary(df: pd.DataFrame) -> pd.DataFrame:
     station_df = station_df.sort_values('피크혼잡', ascending=False).reset_index(drop=True)
     
     return station_df
+
+
+def get_station_full_summary(df: pd.DataFrame, include_9: bool = True, include_20: bool = True) -> pd.DataFrame:
+    """
+    역별 전체 요약 테이블 반환 (피크, 출근평균, 퇴근평균 포함)
+    Args:
+        df: 데이터프레임
+        include_9: 출근시간 9시 포함 여부
+        include_20: 퇴근시간 20시 포함 여부
+    Returns:
+        역별 전체 요약 데이터프레임
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 역별 피크 계산
+    def get_peak_info(group):
+        valid_group = group.dropna(subset=['crowding'])
+        if valid_group.empty:
+            return pd.Series({
+                '피크혼잡': 0.0,
+                '피크시간': '-'
+            })
+        
+        peak_crowding = valid_group['crowding'].max()
+        peak_row = valid_group[valid_group['crowding'] == peak_crowding].iloc[0]
+        
+        return pd.Series({
+            '피크혼잡': peak_crowding,
+            '피크시간': peak_row['time']
+        })
+    
+    station_peak = df.groupby(['호선', '역명']).apply(
+        get_peak_info
+    ).reset_index()
+    
+    # 출근 시간대 필터링
+    if include_9:
+        commute_df = df[(df['hour'] >= 7) & (df['hour'] <= 9)]
+    else:
+        commute_df = df[(df['hour'] >= 7) & (df['hour'] < 9)]
+    
+    # 역별 출근 평균
+    station_commute = commute_df.groupby(['호선', '역명']).agg({
+        'crowding': 'mean'
+    }).reset_index()
+    station_commute = station_commute.rename(columns={'crowding': '출근평균'})
+    
+    # 퇴근 시간대 필터링
+    if include_20:
+        evening_df = df[(df['hour'] >= 17) & (df['hour'] <= 20)]
+    else:
+        evening_df = df[(df['hour'] >= 17) & (df['hour'] < 20)]
+    
+    # 역별 퇴근 평균
+    station_evening = evening_df.groupby(['호선', '역명']).agg({
+        'crowding': 'mean'
+    }).reset_index()
+    station_evening = station_evening.rename(columns={'crowding': '퇴근평균'})
+    
+    # 병합
+    station_summary = station_peak.merge(station_commute, on=['호선', '역명'], how='left')
+    station_summary = station_summary.merge(station_evening, on=['호선', '역명'], how='left')
+    
+    # 결측값 처리
+    station_summary['출근평균'] = station_summary['출근평균'].fillna(0)
+    station_summary['퇴근평균'] = station_summary['퇴근평균'].fillna(0)
+    
+    # 피크 혼잡 기준 내림차순 정렬
+    station_summary = station_summary.sort_values('피크혼잡', ascending=False).reset_index(drop=True)
+    
+    return station_summary

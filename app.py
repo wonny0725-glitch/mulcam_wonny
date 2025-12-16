@@ -12,7 +12,11 @@ from data_loader import (
     calculate_commute_avg,
     calculate_evening_avg,
     get_peak_top10,
-    get_station_peak_summary
+    get_commute_top10,
+    get_evening_top10,
+    get_line_summary,
+    get_station_peak_summary,
+    get_station_full_summary
 )
 
 # 페이지 설정
@@ -159,24 +163,151 @@ with col3:
     )
 
 # ========================================
-# 피크 TOP10 테이블
+# 랭킹 TOP10 탭 (피크 / 출근 / 퇴근)
 # ========================================
 st.markdown("---")
-st.subheader("🔥 피크 혼잡 TOP 10")
+st.subheader("🔥 혼잡도 랭킹 TOP 10")
 
-top10_df = get_peak_top10(filtered_df)
+tab1, tab2, tab3 = st.tabs(["피크 TOP10", "출근 평균 TOP10", "퇴근 평균 TOP10"])
 
-if not top10_df.empty:
-    # 피크혼잡 컬럼 포맷팅
-    display_df = top10_df.copy()
-    display_df['피크혼잡'] = display_df['피크혼잡'].apply(lambda x: f"{x:.1f}%")
+with tab1:
+    st.markdown("##### 피크 혼잡도 기준")
+    top10_df = get_peak_top10(filtered_df)
     
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        height=400
+    if not top10_df.empty:
+        # 피크혼잡 컬럼 포맷팅
+        display_df = top10_df.copy()
+        display_df['피크혼잡'] = display_df['피크혼잡'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=400
+        )
+    else:
+        st.info("조건에 맞는 데이터가 없습니다.")
+
+with tab2:
+    time_range = "7~9시" if include_9 else "7~9시 미만"
+    st.markdown(f"##### 출근시간({time_range}) 평균 혼잡도 기준")
+    commute_top10_df = get_commute_top10(filtered_df, include_9=include_9)
+    
+    if not commute_top10_df.empty:
+        # 출근평균 컬럼 포맷팅
+        display_df = commute_top10_df.copy()
+        display_df['출근평균'] = display_df['출근평균'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=400
+        )
+    else:
+        st.info("조건에 맞는 데이터가 없습니다.")
+
+with tab3:
+    time_range = "17~20시" if include_20 else "17~20시 미만"
+    st.markdown(f"##### 퇴근시간({time_range}) 평균 혼잡도 기준")
+    evening_top10_df = get_evening_top10(filtered_df, include_20=include_20)
+    
+    if not evening_top10_df.empty:
+        # 퇴근평균 컬럼 포맷팅
+        display_df = evening_top10_df.copy()
+        display_df['퇴근평균'] = display_df['퇴근평균'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=400
+        )
+    else:
+        st.info("조건에 맞는 데이터가 없습니다.")
+
+# ========================================
+# 노선별 비교 차트
+# ========================================
+st.markdown("---")
+st.subheader("🚆 노선별 혼잡도 비교")
+
+line_summary = get_line_summary(filtered_df, include_9=include_9, include_20=include_20)
+
+if not line_summary.empty:
+    # Plotly 그룹 바 차트 생성
+    fig = go.Figure()
+    
+    # 평균 혼잡도 바
+    fig.add_trace(go.Bar(
+        name='전체 평균',
+        x=line_summary['호선'],
+        y=line_summary['평균혼잡'],
+        marker_color='lightblue',
+        text=line_summary['평균혼잡'].apply(lambda x: f'{x:.1f}%'),
+        textposition='outside'
+    ))
+    
+    # 피크 혼잡도 바
+    fig.add_trace(go.Bar(
+        name='피크',
+        x=line_summary['호선'],
+        y=line_summary['피크혼잡'],
+        marker_color='red',
+        text=line_summary['피크혼잡'].apply(lambda x: f'{x:.1f}%'),
+        textposition='outside'
+    ))
+    
+    # 출근 평균 바
+    fig.add_trace(go.Bar(
+        name='출근 평균',
+        x=line_summary['호선'],
+        y=line_summary['출근평균'],
+        marker_color='orange',
+        text=line_summary['출근평균'].apply(lambda x: f'{x:.1f}%'),
+        textposition='outside'
+    ))
+    
+    # 퇴근 평균 바
+    fig.add_trace(go.Bar(
+        name='퇴근 평균',
+        x=line_summary['호선'],
+        y=line_summary['퇴근평균'],
+        marker_color='purple',
+        text=line_summary['퇴근평균'].apply(lambda x: f'{x:.1f}%'),
+        textposition='outside'
+    ))
+    
+    fig.update_layout(
+        barmode='group',
+        xaxis_title='호선',
+        yaxis_title='혼잡도 (%)',
+        height=500,
+        hovermode='x unified',
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        )
     )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 테이블로도 표시
+    with st.expander("📋 노선별 상세 수치 보기"):
+        display_summary = line_summary.copy()
+        display_summary['평균혼잡'] = display_summary['평균혼잡'].apply(lambda x: f"{x:.1f}%")
+        display_summary['피크혼잡'] = display_summary['피크혼잡'].apply(lambda x: f"{x:.1f}%")
+        display_summary['출근평균'] = display_summary['출근평균'].apply(lambda x: f"{x:.1f}%")
+        display_summary['퇴근평균'] = display_summary['퇴근평균'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(
+            display_summary,
+            use_container_width=True,
+            hide_index=True
+        )
 else:
     st.info("조건에 맞는 데이터가 없습니다.")
 
@@ -236,17 +367,19 @@ else:
     st.info("표시할 역이 없습니다.")
 
 # ========================================
-# 역별 피크 테이블
+# 역별 종합 요약 테이블
 # ========================================
 st.markdown("---")
-st.subheader("🚉 역별 피크 혼잡 요약")
+st.subheader("🚉 역별 혼잡도 종합 요약")
 
-station_summary = get_station_peak_summary(filtered_df)
+station_summary = get_station_full_summary(filtered_df, include_9=include_9, include_20=include_20)
 
 if not station_summary.empty:
-    # 피크혼잡 컬럼 포맷팅
+    # 컬럼 포맷팅
     display_summary = station_summary.copy()
     display_summary['피크혼잡'] = display_summary['피크혼잡'].apply(lambda x: f"{x:.1f}%")
+    display_summary['출근평균'] = display_summary['출근평균'].apply(lambda x: f"{x:.1f}%")
+    display_summary['퇴근평균'] = display_summary['퇴근평균'].apply(lambda x: f"{x:.1f}%")
     
     st.dataframe(
         display_summary,
@@ -254,6 +387,8 @@ if not station_summary.empty:
         hide_index=True,
         height=400
     )
+    
+    st.caption(f"💡 출근평균: 7~9시{'(9시 포함)' if include_9 else ''} | 퇴근평균: 17~20시{'(20시 포함)' if include_20 else ''}")
 else:
     st.info("조건에 맞는 데이터가 없습니다.")
 
