@@ -1,12 +1,16 @@
 """
 서울교통공사 지하철 혼잡도 대시보드
-Phase 2: MVP 대시보드
+Phase 5: 지도 시각화 포함
 """
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
+import os
+import tempfile
+from datetime import datetime
+
 from data_loader import (
     load_data, 
     get_reference_date, 
@@ -21,6 +25,9 @@ from data_loader import (
     get_station_full_summary,
     get_station_crowding_for_map
 )
+
+from reporting.collector import collect_report_data, generate_yaml_snapshot
+from reporting.renderer_pdf import generate_pdf_report
 
 # 페이지 설정
 st.set_page_config(
@@ -132,7 +139,23 @@ if filtered_df.empty:
     st.stop()
 
 # ========================================
-# 사이드바 다운로드 버튼 (필터링 성공 시)
+# KPI 계산 (보고서에서도 사용)
+# ========================================
+peak_crowding, peak_time = calculate_peak(filtered_df)
+commute_avg = calculate_commute_avg(filtered_df, include_9=include_9)
+evening_avg = calculate_evening_avg(filtered_df, include_20=include_20)
+
+# TOP10 데이터 (보고서에서도 사용)
+top10_peak = get_peak_top10(filtered_df)
+top10_commute = get_commute_top10(filtered_df, include_9=include_9)
+top10_evening = get_evening_top10(filtered_df, include_20=include_20)
+
+# 요약 데이터 (보고서에서도 사용)
+line_summary = get_line_summary(filtered_df, include_9=include_9, include_20=include_20)
+station_summary = get_station_full_summary(filtered_df, include_9=include_9, include_20=include_20)
+
+# ========================================
+# 사이드바 다운로드 버튼
 # ========================================
 # 필터링된 전체 데이터 다운로드
 csv_data = filtered_df.to_csv(index=False, encoding='utf-8-sig')
@@ -145,6 +168,99 @@ st.sidebar.download_button(
 )
 
 # ========================================
+# PDF 보고서 생성 (Phase 6)
+# ========================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📄 보고서 생성")
+
+if st.sidebar.button("PDF 보고서 생성", type="primary"):
+    with st.spinner("보고서를 생성하는 중..."):
+        pdf_path = None
+        try:
+            # 보고서 데이터 수집
+            report_data = collect_report_data(
+                filtered_df=filtered_df,
+                ref_date=ref_date,
+                filters={
+                    'selected_days': selected_days,
+                    'selected_lines': selected_lines,
+                    'selected_directions': selected_directions,
+                    'station_search': station_search,
+                    'include_9': include_9,
+                    'include_20': include_20
+                },
+                kpi_data={
+                    'peak_crowding': peak_crowding,
+                    'peak_time': peak_time,
+                    'commute_avg': commute_avg,
+                    'evening_avg': evening_avg
+                },
+                top10_data={
+                    'peak': top10_peak,
+                    'commute': top10_commute,
+                    'evening': top10_evening
+                },
+                line_summary=line_summary,
+                station_summary=station_summary
+            )
+            
+            # 임시 파일로 PDF 생성 (한글 경로 문제 방지)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            temp_dir = tempfile.gettempdir()
+            # 파일명을 영문으로 변경하여 경로 문제 방지
+            pdf_path = os.path.join(temp_dir, f"subway_report_{ref_date}_{timestamp}.pdf")
+            
+            # PDF 생성
+            st.sidebar.info("📝 PDF 보고서 생성 중...")
+            generate_pdf_report(report_data, pdf_path)
+            
+            # 생성된 PDF 읽기
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+            
+            # 임시 파일 삭제
+            try:
+                os.remove(pdf_path)
+            except:
+                pass
+            
+            # 다운로드 버튼 제공
+            st.sidebar.download_button(
+                label="📥 보고서 다운로드 (PDF)",
+                data=pdf_bytes,
+                file_name=f"혼잡도_보고서_{ref_date}.pdf",
+                mime="application/pdf",
+                key="pdf_download"
+            )
+            
+            # YAML 스냅샷도 제공
+            yaml_snapshot = generate_yaml_snapshot(report_data)
+            st.sidebar.download_button(
+                label="📥 설정 스냅샷 다운로드 (YAML)",
+                data=yaml_snapshot,
+                file_name=f"보고서_설정_{ref_date}.yaml",
+                mime="text/yaml",
+                key="yaml_download"
+            )
+            
+            st.sidebar.success("✅ 보고서가 생성되었습니다!")
+            st.sidebar.info("💡 위의 버튼을 클릭하여 다운로드하세요.")
+            
+        except Exception as e:
+            st.sidebar.error(f"❌ 보고서 생성 실패: {str(e)}")
+            # 자세한 오류 정보 표시 (디버깅용)
+            import traceback
+            with st.sidebar.expander("🔍 오류 상세 정보"):
+                st.code(traceback.format_exc())
+            
+            # 임시 파일 정리
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                except:
+                    pass
+
+# ========================================
 # KPI 메트릭
 # ========================================
 st.markdown("---")
@@ -152,8 +268,6 @@ st.subheader("📈 주요 지표")
 
 col1, col2, col3 = st.columns(3)
 
-# 피크 혼잡
-peak_crowding, peak_time = calculate_peak(filtered_df)
 with col1:
     st.metric(
         "최대 피크 혼잡",
@@ -162,8 +276,6 @@ with col1:
     )
     st.caption(f"발생 시간: {peak_time}")
 
-# 출근 평균
-commute_avg = calculate_commute_avg(filtered_df, include_9=include_9)
 with col2:
     time_range = "7~9시" if include_9 else "7~9시 미만"
     st.metric(
@@ -172,8 +284,6 @@ with col2:
         help="출근 시간대 평균 혼잡도"
     )
 
-# 퇴근 평균
-evening_avg = calculate_evening_avg(filtered_df, include_20=include_20)
 with col3:
     time_range = "17~20시" if include_20 else "17~20시 미만"
     st.metric(
@@ -183,7 +293,7 @@ with col3:
     )
 
 # ========================================
-# 랭킹 TOP10 탭 (피크 / 출근 / 퇴근)
+# 랭킹 TOP10 탭
 # ========================================
 st.markdown("---")
 st.subheader("🔥 혼잡도 랭킹 TOP 10")
@@ -192,21 +302,11 @@ tab1, tab2, tab3 = st.tabs(["피크 TOP10", "출근 평균 TOP10", "퇴근 평�
 
 with tab1:
     st.markdown("##### 피크 혼잡도 기준")
-    top10_df = get_peak_top10(filtered_df)
-    
-    if not top10_df.empty:
-        # 피크혼잡 컬럼 포맷팅
-        display_df = top10_df.copy()
+    if not top10_peak.empty:
+        display_df = top10_peak.copy()
         display_df['피크혼잡'] = display_df['피크혼잡'].apply(lambda x: f"{x:.1f}%")
+        st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
         
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            height=400
-        )
-        
-        # CSV 다운로드 버튼
         csv_top10 = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label="📥 피크 TOP10 다운로드 (CSV)",
@@ -220,21 +320,11 @@ with tab1:
 with tab2:
     time_range = "7~9시" if include_9 else "7~9시 미만"
     st.markdown(f"##### 출근시간({time_range}) 평균 혼잡도 기준")
-    commute_top10_df = get_commute_top10(filtered_df, include_9=include_9)
-    
-    if not commute_top10_df.empty:
-        # 출근평균 컬럼 포맷팅
-        display_df = commute_top10_df.copy()
+    if not top10_commute.empty:
+        display_df = top10_commute.copy()
         display_df['출근평균'] = display_df['출근평균'].apply(lambda x: f"{x:.1f}%")
+        st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
         
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            height=400
-        )
-        
-        # CSV 다운로드 버튼
         csv_commute = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label="📥 출근평균 TOP10 다운로드 (CSV)",
@@ -248,21 +338,11 @@ with tab2:
 with tab3:
     time_range = "17~20시" if include_20 else "17~20시 미만"
     st.markdown(f"##### 퇴근시간({time_range}) 평균 혼잡도 기준")
-    evening_top10_df = get_evening_top10(filtered_df, include_20=include_20)
-    
-    if not evening_top10_df.empty:
-        # 퇴근평균 컬럼 포맷팅
-        display_df = evening_top10_df.copy()
+    if not top10_evening.empty:
+        display_df = top10_evening.copy()
         display_df['퇴근평균'] = display_df['퇴근평균'].apply(lambda x: f"{x:.1f}%")
+        st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
         
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            height=400
-        )
-        
-        # CSV 다운로드 버튼
         csv_evening = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label="📥 퇴근평균 TOP10 다운로드 (CSV)",
@@ -279,13 +359,9 @@ with tab3:
 st.markdown("---")
 st.subheader("🚆 노선별 혼잡도 비교")
 
-line_summary = get_line_summary(filtered_df, include_9=include_9, include_20=include_20)
-
 if not line_summary.empty:
-    # Plotly 그룹 바 차트 생성
     fig = go.Figure()
     
-    # 평균 혼잡도 바
     fig.add_trace(go.Bar(
         name='전체 평균',
         x=line_summary['호선'],
@@ -295,7 +371,6 @@ if not line_summary.empty:
         textposition='outside'
     ))
     
-    # 피크 혼잡도 바
     fig.add_trace(go.Bar(
         name='피크',
         x=line_summary['호선'],
@@ -305,7 +380,6 @@ if not line_summary.empty:
         textposition='outside'
     ))
     
-    # 출근 평균 바
     fig.add_trace(go.Bar(
         name='출근 평균',
         x=line_summary['호선'],
@@ -315,7 +389,6 @@ if not line_summary.empty:
         textposition='outside'
     ))
     
-    # 퇴근 평균 바
     fig.add_trace(go.Bar(
         name='퇴근 평균',
         x=line_summary['호선'],
@@ -331,30 +404,18 @@ if not line_summary.empty:
         yaxis_title='혼잡도 (%)',
         height=500,
         hovermode='x unified',
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='right',
-            x=1
-        )
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # 테이블로도 표시
     with st.expander("📋 노선별 상세 수치 보기"):
         display_summary = line_summary.copy()
         display_summary['평균혼잡'] = display_summary['평균혼잡'].apply(lambda x: f"{x:.1f}%")
         display_summary['피크혼잡'] = display_summary['피크혼잡'].apply(lambda x: f"{x:.1f}%")
         display_summary['출근평균'] = display_summary['출근평균'].apply(lambda x: f"{x:.1f}%")
         display_summary['퇴근평균'] = display_summary['퇴근평균'].apply(lambda x: f"{x:.1f}%")
-        
-        st.dataframe(
-            display_summary,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(display_summary, use_container_width=True, hide_index=True)
 else:
     st.info("조건에 맞는 데이터가 없습니다.")
 
@@ -364,29 +425,18 @@ else:
 st.markdown("---")
 st.subheader("📊 역별 시간대별 혼잡도")
 
-# 역 선택
 available_stations = sorted(filtered_df['역명'].unique().tolist())
 
 if available_stations:
-    selected_station = st.selectbox(
-        "역 선택",
-        options=available_stations,
-        index=0
-    )
+    selected_station = st.selectbox("역 선택", options=available_stations, index=0)
     
-    # 선택한 역 데이터 필터링
     station_df = filtered_df[filtered_df['역명'] == selected_station].copy()
-    
-    # 방향별로 그룹화하여 평균 계산
     station_agg = station_df.groupby(['time', 'hour', 'minute', 'time_order', '상하선구분']).agg({
         'crowding': 'mean'
     }).reset_index()
-    
-    # 시간 순서대로 정렬
     station_agg = station_agg.sort_values('time_order')
     
     if not station_agg.empty:
-        # Plotly 라인차트
         fig = px.line(
             station_agg,
             x='time',
@@ -394,19 +444,9 @@ if available_stations:
             color='상하선구분',
             markers=True,
             title=f"{selected_station}역 시간대별 혼잡도",
-            labels={
-                'time': '시간대',
-                'crowding': '혼잡도 (%)',
-                '상하선구분': '방향'
-            }
+            labels={'time': '시간대', 'crowding': '혼잡도 (%)', '상하선구분': '방향'}
         )
-        
-        fig.update_layout(
-            xaxis_tickangle=-45,
-            hovermode='x unified',
-            height=500
-        )
-        
+        fig.update_layout(xaxis_tickangle=-45, hovermode='x unified', height=500)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info(f"{selected_station}역에 대한 데이터가 없습니다.")
@@ -419,23 +459,14 @@ else:
 st.markdown("---")
 st.subheader("🚉 역별 혼잡도 종합 요약")
 
-station_summary = get_station_full_summary(filtered_df, include_9=include_9, include_20=include_20)
-
 if not station_summary.empty:
-    # 컬럼 포맷팅
     display_summary = station_summary.copy()
     display_summary['피크혼잡'] = display_summary['피크혼잡'].apply(lambda x: f"{x:.1f}%")
     display_summary['출근평균'] = display_summary['출근평균'].apply(lambda x: f"{x:.1f}%")
     display_summary['퇴근평균'] = display_summary['퇴근평균'].apply(lambda x: f"{x:.1f}%")
     
-    st.dataframe(
-        display_summary,
-        use_container_width=True,
-        hide_index=True,
-        height=400
-    )
+    st.dataframe(display_summary, use_container_width=True, hide_index=True, height=400)
     
-    # CSV 다운로드 버튼
     csv_station_summary = display_summary.to_csv(index=False, encoding='utf-8-sig')
     st.download_button(
         label="📥 역별 종합 요약 다운로드 (CSV)",
@@ -454,20 +485,15 @@ else:
 st.markdown("---")
 st.subheader("🌡️ 전체 노선 시간대별 혼잡도 히트맵")
 
-# 노선별, 방향별, 시간대별 평균 혼잡도 계산
 heatmap_data = filtered_df.groupby(['호선', '상하선구분', 'time', 'time_order']).agg({
     'crowding': 'mean'
 }).reset_index()
 
-# 노선+방향 컬럼 생성 (예: "1호선-상행")
 heatmap_data['노선방향'] = heatmap_data['호선'] + '-' + heatmap_data['상하선구분']
 
-# 피벗 테이블 생성 (행: 노선방향, 열: 시간)
 if not heatmap_data.empty:
-    # 시간 순서대로 정렬
     heatmap_data = heatmap_data.sort_values('time_order')
     
-    # 피벗 테이블 생성
     pivot_data = heatmap_data.pivot_table(
         index='노선방향',
         columns='time',
@@ -475,7 +501,6 @@ if not heatmap_data.empty:
         aggfunc='mean'
     )
     
-    # 노선별로 정렬 (1호선-상행, 1호선-하행, 2호선-상행, ...)
     line_order = []
     for line in sorted(filtered_df['호선'].unique()):
         for direction in ['상행', '하행']:
@@ -486,47 +511,33 @@ if not heatmap_data.empty:
     if line_order:
         pivot_data = pivot_data.reindex(line_order)
     
-    # Plotly 히트맵 생성
     fig = go.Figure(data=go.Heatmap(
         z=pivot_data.values,
         x=pivot_data.columns,
         y=pivot_data.index,
         colorscale=[
-            [0, 'white'],      # 0% - 흰색
-            [0.34, '#ffffcc'], # 34% - 연한 노란색 (좌석 만석)
-            [0.5, '#ffeda0'],  # 50% - 노란색
-            [0.7, '#feb24c'],  # 70% - 주황색
-            [0.85, '#fc4e2a'], # 85% - 진한 주황색
-            [1, '#bd0026']     # 100%+ - 붉은색 (매우 혼잡)
+            [0, 'white'],
+            [0.34, '#ffffcc'],
+            [0.5, '#ffeda0'],
+            [0.7, '#feb24c'],
+            [0.85, '#fc4e2a'],
+            [1, '#bd0026']
         ],
-        colorbar=dict(
-            title=dict(
-                text="혼잡도 (%)",
-                side="right"
-            ),
-            tickmode="linear",
-            tick0=0,
-            dtick=20
-        ),
+        colorbar=dict(title=dict(text="혼잡도 (%)", side="right"), tickmode="linear", tick0=0, dtick=20),
         hovertemplate='<b>%{y}</b><br>시간: %{x}<br>혼잡도: %{z:.1f}%<extra></extra>'
     ))
     
     fig.update_layout(
-        title={
-            'text': '전체 노선 시간대별 평균 혼잡도',
-            'x': 0.5,
-            'xanchor': 'center'
-        },
+        title={'text': '전체 노선 시간대별 평균 혼잡도', 'x': 0.5, 'xanchor': 'center'},
         xaxis_title='시간대',
         yaxis_title='노선-방향',
         xaxis={'tickangle': -45},
-        height=max(400, len(pivot_data.index) * 30),  # 노선 수에 따라 높이 조정
+        height=max(400, len(pivot_data.index) * 30),
         hovermode='closest'
     )
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # 색상 범례 설명
     st.caption("""
     💡 **색상 해석**: 
     - 🤍 흰색/연한색 (0-34%): 좌석 여유~만석 
@@ -543,13 +554,11 @@ else:
 st.markdown("---")
 st.subheader("🗺️ 역별 혼잡도 지도")
 
-# 지도 옵션
 col_map1, col_map2 = st.columns([1, 3])
 
 with col_map1:
     st.markdown("##### 지도 표시 옵션")
     
-    # 혼잡도 기준 선택
     crowding_type = st.radio(
         "혼잡도 기준",
         options=["average", "peak", "commute", "evening"],
@@ -563,7 +572,6 @@ with col_map1:
         help="지도에 표시할 혼잡도 기준을 선택합니다"
     )
     
-    # 색상 범례
     st.markdown("##### 색상 범례")
     st.markdown("""
     <div style='font-size: 0.9em;'>
@@ -579,7 +587,6 @@ with col_map1:
     """, unsafe_allow_html=True)
 
 with col_map2:
-    # 지도용 데이터 생성
     map_data = get_station_crowding_for_map(
         filtered_df, 
         crowding_type=crowding_type,
@@ -588,40 +595,29 @@ with col_map2:
     )
     
     if not map_data.empty:
-        # Folium 지도 생성 (서울 중심)
-        m = folium.Map(
-            location=[37.5665, 126.9780],
-            zoom_start=11,
-            tiles='OpenStreetMap'
-        )
+        m = folium.Map(location=[37.5665, 126.9780], zoom_start=11, tiles='OpenStreetMap')
         
-        # 색상 함수 정의
         def get_color(crowding):
-            """혼잡도에 따른 마커 색상 반환"""
             if crowding < 34:
-                return '#2ECC71'  # 초록색
+                return '#2ECC71'
             elif crowding < 70:
-                return '#F1C40F'  # 노란색
+                return '#F1C40F'
             elif crowding < 100:
-                return '#E67E22'  # 주황색
+                return '#E67E22'
             else:
-                return '#E74C3C'  # 빨간색
+                return '#E74C3C'
         
-        # 마커 크기 함수 정의
         def get_radius(crowding):
-            """혼잡도에 따른 마커 크기 반환 (5~20px)"""
             min_radius = 5
             max_radius = 20
-            normalized = min(crowding / 150, 1.0)  # 150%를 최대로 정규화
+            normalized = min(crowding / 150, 1.0)
             return min_radius + (max_radius - min_radius) * normalized
         
-        # 각 역에 마커 추가
         for _, row in map_data.iterrows():
             crowding = row['crowding_value']
             color = get_color(crowding)
             radius = get_radius(crowding)
             
-            # 팝업 HTML 생성
             popup_html = f"""
             <div style='font-family: Arial; min-width: 200px;'>
                 <h4 style='margin: 0 0 10px 0; color: #2C3E50;'>{row['역명']}역</h4>
@@ -633,7 +629,6 @@ with col_map2:
             </div>
             """
             
-            # CircleMarker 추가
             folium.CircleMarker(
                 location=[row['lat'], row['lng']],
                 radius=radius,
@@ -646,10 +641,8 @@ with col_map2:
                 weight=2
             ).add_to(m)
         
-        # Streamlit에 지도 표시
         st_folium(m, width=None, height=600)
         
-        # 통계 정보
         st.caption(f"""
         💡 **지도 정보**: 
         총 {len(map_data)}개 역 표시 | 
@@ -661,4 +654,4 @@ with col_map2:
 
 # 하단 정보
 st.markdown("---")
-st.caption("Phase 5: 지도 시각화 - 서울교통공사 지하철 혼잡도")
+st.caption("Phase 6: PDF 보고서 생성 - 서울교통공사 지하철 혼잡도")

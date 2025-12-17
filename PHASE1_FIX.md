@@ -39,3 +39,4 @@ CSV 파일의 실제 컬럼명이 예상과 달랐음:
 2. 또는 우측 상단 메뉴 → "Clear cache" 클릭
 3. 또는 터미널에서 Ctrl+C로 중지 후 `streamlit run app.py` 재실행
 
+
